@@ -1,0 +1,2 @@
+- Always use uv package manager to run and handle python related scripts, libraries, etc.
+- Always keep git commit messages as small as possible
