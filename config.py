@@ -12,7 +12,7 @@ TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
 # Server Configuration
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", 8000))
-NGROK_URL = os.getenv("NGROK_URL", "http://localhost:8000")
+SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", "http://localhost:8000")  # Public URL for Twilio webhooks/WebSocket
 
 # Agent Configuration
 AGENT_GREETING = "Hello! This is an AI assistant. How can I help you today?"

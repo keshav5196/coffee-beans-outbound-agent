@@ -31,9 +31,10 @@ Edit `.env`:
 TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_AUTH_TOKEN=your_auth_token_here
 TWILIO_PHONE_NUMBER=+1234567890
+SERVER_BASE_URL=https://your-ngrok-url.ngrok.io
 ```
 
-## 4. Expose to Internet
+## 4. Expose to Internet (ngrok)
 
 In a new terminal:
 ```bash
@@ -42,8 +43,10 @@ ngrok http 8000
 
 Copy the HTTPS URL (e.g., `https://abc123.ngrok.io`) and update `.env`:
 ```
-NGROK_URL=https://abc123.ngrok.io
+SERVER_BASE_URL=https://abc123.ngrok.io
 ```
+
+This enables Twilio to reach your WebSocket endpoint for real-time conversations.
 
 ## 5. Run the Server
 
@@ -65,10 +68,12 @@ uv run python example_usage.py
 
 Or use curl:
 ```bash
-curl -X POST "http://localhost:8000/call/initiate?phone_number=%2B1234567890"
+curl -X POST "http://localhost:8000/call/initiate" \
+  -H "Content-Type: application/json" \
+  -d '{"to": "+1234567890"}'
 ```
 
-Replace `1234567890` with your phone number.
+Replace `1234567890` with your phone number (must be in E.164 format).
 
 ## 7. Answer the Call!
 

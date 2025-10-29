@@ -1,12 +1,11 @@
 import json
-import asyncio
-from typing import Optional
 import logging
+from typing import Any, Dict, List
 
-from fastapi import FastAPI, WebSocket, BackgroundTasks, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
+from fastapi.responses import Response
+from pydantic import BaseModel
 from twilio.rest import Client
-from twilio.twiml.voice_response import VoiceResponse
 import uvicorn
 
 from config import (
@@ -15,7 +14,7 @@ from config import (
     TWILIO_PHONE_NUMBER,
     HOST,
     PORT,
-    NGROK_URL,
+    SERVER_BASE_URL,
     AGENT_GREETING,
 )
 from agents import get_agent_response
@@ -25,168 +24,174 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
-app = FastAPI(title="Outbound AI Agent")
+app = FastAPI(title="Outbound AI Agent - ConversationRelay")
 
 # Twilio client
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
-# In-memory storage for active calls
-# Key: CallSid, Value: {"phone_number": str, "messages": list, "connected": bool}
-active_calls = {}
+# In-memory session storage for active calls
+# Key: session_id, Value: {"call_sid": str, "phone_number": str, "history": list}
+SESSIONS: Dict[str, Dict[str, Any]] = {}
+
+
+class CallRequest(BaseModel):
+    """Request model for initiating a call."""
+    to: str  # Phone number in E.164 format
 
 
 @app.post("/call/initiate")
-async def initiate_call(phone_number: str, background_tasks: BackgroundTasks):
+async def initiate_call(call: CallRequest):
     """Initiate an outbound call to a given phone number.
 
-    This endpoint starts the call and sets up the voice response webhook.
+    This endpoint starts the call and sets up the ConversationRelay voice channel.
     """
-    try:
-        logger.info(f"Initiating call to {phone_number}")
+    if not twilio_client:
+        raise HTTPException(status_code=500, detail="Twilio client not configured (missing env vars)")
 
-        # Create the call with webhook
-        call = twilio_client.calls.create(
-            to=phone_number,
+    try:
+        logger.info(f"Initiating call to {call.to}")
+
+        voice_url = f"{SERVER_BASE_URL}/voice"
+
+        # Create the call with TwiML endpoint
+        twilio_call = twilio_client.calls.create(
+            to=call.to,
             from_=TWILIO_PHONE_NUMBER,
-            url=f"{NGROK_URL}/twiml/initial",
+            url=voice_url,
             method="POST",
         )
 
-        # Store call info
-        active_calls[call.sid] = {
-            "phone_number": phone_number,
-            "messages": [],
-            "connected": False,
+        # Store session info
+        SESSIONS[twilio_call.sid] = {
+            "call_sid": twilio_call.sid,
+            "phone_number": call.to,
+            "history": [],
         }
 
-        logger.info(f"Call created with SID: {call.sid}")
+        logger.info(f"Call created with SID: {twilio_call.sid}")
 
-        return JSONResponse(
-            status_code=200,
-            content={"call_sid": call.sid, "status": "initiated"},
-        )
+        return {
+            "call_sid": twilio_call.sid,
+            "status": "initiated",
+            "phone_number": call.to,
+        }
 
     except Exception as e:
         logger.error(f"Error initiating call: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/twiml/initial")
-async def handle_initial_twiml():
-    """Handle the initial TwiML response for the call.
+@app.post("/voice")
+async def voice_webhook(request: Request):
+    """TwiML endpoint called when Twilio dials the number.
 
-    This is the first webhook called when the call is initiated.
-    We set up the voice channel and start gathering input.
+    Returns TwiML which plays a greeting and hands off to ConversationRelay WebSocket.
     """
-    response = VoiceResponse()
-
-    # Use Say to play the greeting
-    response.say(
-        AGENT_GREETING,
-        voice="alice",
+    twiml = (
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+        "<Response>"
+        f"  <Say voice=\"alice\">{AGENT_GREETING}</Say>"
+        "  <Connect>"
+        "    <ConversationRelay />"
+        "  </Connect>"
+        "</Response>"
     )
 
-    # Start recording
-    response.record(
-        action="/handle/recording",
-        method="POST",
-        timeout=10,
-        max_speech_time=30,
-    )
-
-    return response.to_xml()
+    return Response(content=twiml, media_type="application/xml")
 
 
-@app.post("/handle/recording")
-async def handle_recording(
-    CallSid: str = None,
-    RecordingUrl: str = None,
-    SpeechResult: str = None,
-):
-    """Handle user's spoken input from Twilio Speech Recognition.
+@app.websocket("/ws/{session_id}")
+async def websocket_endpoint(websocket: WebSocket, session_id: str):
+    """WebSocket endpoint for Twilio ConversationRelay.
 
-    When user speaks, Twilio captures their speech and sends it here.
+    Receives real-time speech events from Twilio and sends agent responses.
     """
+    await websocket.accept()
+    logger.info(f"WebSocket connection established for session_id={session_id}")
+
+    # Get or create session
+    if session_id not in SESSIONS:
+        SESSIONS[session_id] = {
+            "call_sid": session_id,
+            "phone_number": "unknown",
+            "history": [],
+        }
+
+    session = SESSIONS[session_id]
+    history = session["history"]
+
     try:
-        logger.info(f"Recording received for call {CallSid}: {SpeechResult}")
+        while True:
+            # Receive message from Twilio
+            raw = await websocket.receive_text()
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                logger.warning(f"Received non-JSON payload: {raw}")
+                continue
 
-        if CallSid not in active_calls:
-            logger.warning(f"Call SID {CallSid} not found in active calls")
-            return handle_end_call()
+            logger.info(f"Received WebSocket message: {json.dumps(msg)}")
 
-        call_info = active_calls[CallSid]
+            # Extract user text from the message
+            user_text = None
 
-        # Get agent response
-        agent_response = get_agent_response(
-            SpeechResult,
-            conversation_history=call_info["messages"],
-        )
+            # Try common locations for transcribed text
+            for key in ("transcript", "text", "speech", "utterance", "transcription"):
+                if key in msg and isinstance(msg[key], str) and msg[key].strip():
+                    user_text = msg[key].strip()
+                    break
 
-        # Store in conversation history
-        call_info["messages"].append({"role": "user", "content": SpeechResult})
-        call_info["messages"].append({"role": "assistant", "content": agent_response})
+            # Check nested structure (result.alternatives)
+            if not user_text:
+                result = msg.get("result")
+                if isinstance(result, dict):
+                    alts = result.get("alternatives") or []
+                    if isinstance(alts, list) and len(alts) > 0 and isinstance(alts[0], dict):
+                        t = alts[0].get("transcript")
+                        if isinstance(t, str) and t.strip():
+                            user_text = t.strip()
 
-        logger.info(f"Agent response: {agent_response}")
+            # Process if we have user text
+            if user_text:
+                logger.info(f"User text detected: {user_text}")
+                history.append({"role": "user", "content": user_text})
 
-        # Prepare response
-        response = VoiceResponse()
+                # Get agent response
+                agent_response = get_agent_response(user_text, conversation_history=history)
+                history.append({"role": "assistant", "content": agent_response})
 
-        # Say the agent's response
-        response.say(agent_response, voice="alice")
+                logger.info(f"Agent response: {agent_response}")
 
-        # Record next user input
-        response.record(
-            action="/handle/recording",
-            method="POST",
-            timeout=10,
-            max_speech_time=30,
-        )
+                # Send response back to Twilio
+                spi_msg = {
+                    "type": "response.create",
+                    "response": {
+                        "speech": agent_response,
+                    },
+                }
 
-        return response.to_xml()
+                await websocket.send_text(json.dumps(spi_msg))
+                logger.info(f"Sent response: {agent_response}")
 
+    except WebSocketDisconnect:
+        logger.info(f"WebSocket disconnected for session_id={session_id}")
     except Exception as e:
-        logger.error(f"Error handling recording: {str(e)}")
-        return handle_end_call()
-
-
-def handle_end_call():
-    """Generate TwiML to end the call."""
-    response = VoiceResponse()
-    response.say("Thank you for calling. Goodbye!", voice="alice")
-    response.hangup()
-    return response.to_xml()
-
-
-@app.post("/call/status")
-async def call_status(CallSid: str = None, CallStatus: str = None):
-    """Webhook to track call status changes."""
-    logger.info(f"Call {CallSid} status: {CallStatus}")
-
-    if CallStatus == "completed" or CallStatus == "failed":
-        # Clean up
-        if CallSid in active_calls:
-            call_info = active_calls.pop(CallSid)
-            logger.info(f"Call {CallSid} ended. Conversation history: {call_info['messages']}")
-
-    return JSONResponse(status_code=200, content={"status": "ok"})
+        logger.exception(f"Unexpected error in WebSocket handler: {e}")
 
 
 @app.get("/calls/active")
 async def get_active_calls():
-    """Get all active calls."""
-    return JSONResponse(
-        status_code=200,
-        content={
-            "active_calls": list(active_calls.keys()),
-            "count": len(active_calls),
-        },
-    )
+    """Get all active sessions."""
+    return {
+        "active_calls": list(SESSIONS.keys()),
+        "count": len(SESSIONS),
+    }
 
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return JSONResponse(status_code=200, content={"status": "healthy"})
+    return {"status": "healthy"}
 
 
 @app.on_event("startup")
@@ -194,13 +199,14 @@ async def startup_event():
     """Run on application startup."""
     logger.info("Application started")
     logger.info(f"Twilio Phone Number: {TWILIO_PHONE_NUMBER}")
+    logger.info(f"Server Base URL: {SERVER_BASE_URL}")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Run on application shutdown."""
     logger.info("Application shutting down")
-    active_calls.clear()
+    SESSIONS.clear()
 
 
 if __name__ == "__main__":

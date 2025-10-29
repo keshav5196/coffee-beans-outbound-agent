@@ -37,6 +37,7 @@ def generate_dummy_response(user_input: str) -> str:
     """Generate a dummy response based on user input.
 
     This is a placeholder for a real LLM. Replace with actual LLM integration.
+    Used in ConversationRelay WebSocket for real-time voice conversations.
     """
     user_input_lower = user_input.lower()
 

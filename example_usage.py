@@ -27,7 +27,7 @@ def initiate_call(phone_number: str) -> Optional[str]:
     try:
         response = requests.post(
             f"{BASE_URL}/call/initiate",
-            params={"phone_number": phone_number},
+            json={"to": phone_number},
         )
         response.raise_for_status()
 

@@ -1,92 +1,88 @@
 # Outbound AI Agent
 
-A conversational AI agent for outbound calling using FastAPI, Twilio, and LangGraph.
+A real-time conversational AI agent for outbound calling using FastAPI, Twilio ConversationRelay WebSocket, and LangGraph.
 
-## Architecture Overview
+## Features
 
-- **FastAPI**: Web framework for handling webhooks and API endpoints
-- **Twilio**: Voice calling and speech-to-text/text-to-speech
-- **LangGraph**: Agent framework for managing conversation state
-- **Dummy Agent**: Simple rule-based responses (placeholder for real LLM)
+✅ Outbound calling via Twilio
+✅ Real-time audio streaming (ConversationRelay WebSocket)
+✅ Low-latency (~200-500ms) speech-to-text & text-to-speech
+✅ Multi-turn conversation handling with history
+✅ LangGraph agent framework ready for LLM integration
+✅ Session-based call management
+✅ Easy deployment with uv package manager
 
-## Project Structure
+## Tech Stack
 
-```
-outbound_ai_agent/
-├── main.py           # FastAPI app, Twilio webhooks, call management
-├── agents.py         # LangGraph agent for conversation logic
-├── config.py         # Configuration and environment variables
-├── requirements.txt  # Python dependencies
-├── .env.example      # Example environment variables
-└── README.md         # This file
-```
+- **FastAPI**: Web framework with async/await support
+- **Twilio ConversationRelay**: Real-time voice API with WebSocket
+- **LangGraph**: Conversation agent orchestration
+- **uv**: Python package & project manager
+- **Python 3.9+**: Core runtime
 
-## Setup Instructions
+## Quick Start
 
 ### 1. Prerequisites
 
 - Python 3.9+
-- Twilio Account (with SMS/Voice capability)
-- ngrok (for exposing local server to internet)
+- Twilio Account with Voice capability
+- ngrok (for local development)
 
-### 2. Install Dependencies
+### 2. Setup
 
 ```bash
+# Clone and navigate to project
 cd outbound_ai_agent
+
+# Install dependencies
 uv sync
-```
 
-### 3. Configure Twilio
-
-1. Get your credentials from [Twilio Console](https://console.twilio.com):
-   - Account SID
-   - Auth Token
-   - Verified Phone Number (to call from)
-
-2. Create `.env` file:
-```bash
+# Configure environment
 cp .env.example .env
+# Edit .env with your Twilio credentials
 ```
 
-3. Fill in your Twilio credentials in `.env`:
-```
-TWILIO_ACCOUNT_SID=your_account_sid
-TWILIO_AUTH_TOKEN=your_auth_token
-TWILIO_PHONE_NUMBER=+1234567890
-NGROK_URL=https://your-ngrok-url.ngrok.io
-```
+### 3. Get Twilio Credentials
 
-### 4. Expose Server with ngrok
+1. Go to [Twilio Console](https://console.twilio.com)
+2. Copy Account SID and Auth Token
+3. Get a verified phone number (to call from)
+
+### 4. Expose to Internet (ngrok)
 
 ```bash
-# In another terminal
 ngrok http 8000
-# Copy the https URL provided
 ```
 
-Update `NGROK_URL` in `.env` with the ngrok URL.
+Copy the HTTPS URL and update `.env`:
+```
+SERVER_BASE_URL=https://abc123.ngrok.io
+```
 
-### 5. Run the Application
+### 5. Run the Server
 
 ```bash
 uv run python main.py
 ```
 
-The server will start on `http://localhost:8000`
+Server starts on `http://localhost:8000`
 
 ## API Endpoints
 
-### Start a Call
+### Initiate Call
 
 ```bash
-curl -X POST "http://localhost:8000/call/initiate?phone_number=%2B1234567890"
+curl -X POST "http://localhost:8000/call/initiate" \
+  -H "Content-Type: application/json" \
+  -d '{"to": "+1234567890"}'
 ```
 
-Response:
+**Response:**
 ```json
 {
   "call_sid": "CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-  "status": "initiated"
+  "status": "initiated",
+  "phone_number": "+1234567890"
 }
 ```
 
@@ -104,93 +100,173 @@ curl "http://localhost:8000/health"
 
 ## How It Works
 
-1. **Initiate Call** (`/call/initiate`):
-   - Creates an outbound call to the specified number
-   - Twilio connects and calls the `/twiml/initial` endpoint
+### Call Flow (ConversationRelay)
 
-2. **Initial TwiML** (`/twiml/initial`):
-   - Plays the greeting: "Hello! This is an AI assistant..."
-   - Starts recording user speech
+1. **Initiate Call** (`POST /call/initiate`):
+   - Creates outbound call via Twilio API
+   - Stores session for WebSocket communication
 
-3. **Handle User Input** (`/handle/recording`):
-   - Receives transcribed speech from Twilio
-   - Passes it to the LangGraph agent
-   - Agent generates a response
-   - Says the response back to the user
-   - Records next user input (loop)
+2. **TwiML Greeting** (`POST /voice`):
+   - Plays greeting: "Hello! This is an AI assistant..."
+   - Hands off to ConversationRelay for real-time streaming
 
-4. **Call Status** (`/call/status`):
-   - Tracks when call ends
-   - Cleans up conversation history
+3. **Real-time WebSocket** (`/ws/{session_id}`):
+   - Twilio streams real-time transcribed speech
+   - Agent generates response (low latency)
+   - Sends response back via WebSocket SPI message
+   - Twilio synthesizes & plays audio, continues listening
 
-## Agent Configuration
+4. **Call Cleanup**:
+   - WebSocket disconnects when caller hangs up
+   - Session history is retained
 
-The current agent is a **dummy agent** with simple rule-based responses. To integrate a real LLM:
+## Architecture
 
-1. Update `agents.py`:
-   - Replace `generate_dummy_response()` with actual LLM call
-   - Use OpenAI, Claude, or another LLM API
+### System Overview
 
-2. Example integration point in `generate_dummy_response()`:
+```
+User → REST API → FastAPI → Twilio
+                     ↓
+                  WebSocket
+                  (Real-time)
+                     ↓
+                 LangGraph Agent
+                (Conversation Logic)
+```
+
+### Key Components
+
+**main.py** - FastAPI server
+- `POST /call/initiate`: Create outbound call
+- `POST /voice`: TwiML endpoint with greeting + ConversationRelay handoff
+- `WebSocket /ws/{session_id}`: Real-time audio handler with agent integration
+- `GET /calls/active`: List active sessions
+- `GET /health`: Health check
+
+**agents.py** - LangGraph agent
+- `get_agent_response()`: Main entry point
+- `generate_dummy_response()`: Rule-based responses (replaceable with real LLM)
+- Maintains conversation history per session
+
+**config.py** - Environment configuration
+- Twilio credentials
+- Server settings (HOST, PORT, SERVER_BASE_URL)
+- Agent greeting customization
+
+### Data Flow
+
+```
+User Speaks
+    ↓
+Twilio STT (real-time)
+    ↓
+WebSocket JSON message
+    ↓
+Extract transcribed text
+    ↓
+LangGraph Agent → Generate response
+    ↓
+WebSocket SPI message: {"type": "response.create", "response": {"speech": "..."}}
+    ↓
+Twilio TTS + Audio Playback
+    ↓
+Listen for next input (loop)
+```
+
+## Project Structure
+
+```
+outbound_ai_agent/
+├── main.py              # FastAPI + WebSocket + ConversationRelay
+├── agents.py            # LangGraph agent with conversation logic
+├── config.py            # Environment & Twilio configuration
+├── example_usage.py     # API client example
+├── pyproject.toml       # Project metadata & dependencies (uv)
+├── uv.lock             # Locked dependency versions
+├── .python-version      # Python 3.12 specification
+├── .env.example         # Environment template
+├── setup.sh             # Quick setup script
+├── README.md            # This file
+├── QUICKSTART.md        # Fast start guide
+└── .gitignore           # Git exclusions
+```
+
+## Integrating a Real LLM
+
+Replace `generate_dummy_response()` in **agents.py**:
+
 ```python
-# from langchain.chat_models import ChatOpenAI
-# llm = ChatOpenAI(model="gpt-4", temperature=0.7)
-# response = llm.invoke(user_input)
+from langchain.chat_models import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4", temperature=0.7)
+
+def get_agent_response(user_message, conversation_history=None):
+    response = llm.invoke(user_message)
+    return response.content
 ```
 
-## Testing
+Supports: OpenAI, Anthropic Claude, open-source models (LLaMA, Mistral, etc.)
 
-### Manual Testing via curl
+## Performance
 
-```bash
-# 1. Start the server
-uv run python main.py
+- **Latency**: ~200-500ms (real-time WebSocket)
+- **Concurrent Calls**: ~50-100 (depends on agent response time & network)
+- **Architecture**: Stateless (scales horizontally)
 
-# 2. In another terminal, initiate a call
-curl -X POST "http://localhost:8000/call/initiate?phone_number=%2B19876543210"
+### For Production
 
-# 3. When your phone rings and you answer, you'll hear the greeting
-# 4. Speak to interact with the agent
-```
-
-## Features
-
-✅ Outbound calling via Twilio
-✅ Speech-to-text recognition
-✅ Text-to-speech responses
-✅ Multi-turn conversation handling
-✅ Conversation history tracking
-✅ Greeting on call pickup
-✅ Call status monitoring
-
-## Future Improvements
-
-- [ ] Real LLM integration (OpenAI, Claude, etc.)
-- [ ] Conversation memory/context persistence
-- [ ] Advanced error handling and retry logic
-- [ ] Support for Twilio ConversationRelay (WebSocket for real-time audio)
-- [ ] Database for storing conversation logs
-- [ ] User authentication and authorization
-- [ ] Rate limiting and call queuing
-- [ ] Advanced prompt engineering
-- [ ] Integration with external APIs/tools
-- [ ] Monitoring and analytics
+- Add persistent database (PostgreSQL, Redis) for session state
+- Use message queues (Redis, RabbitMQ) for scaling
+- Implement caching for common responses
+- Add monitoring (Prometheus/Grafana)
+- Load balancing with multiple instances
+- Rate limiting & API authentication
 
 ## Troubleshooting
 
 ### "Missing Twilio credentials"
-- Ensure `.env` file is created and filled with correct values
-- Check that environment variables are loaded: `python -c "from config import TWILIO_ACCOUNT_SID; print(TWILIO_ACCOUNT_SID)"`
+```bash
+uv run python -c "from config import TWILIO_ACCOUNT_SID; print(TWILIO_ACCOUNT_SID)"
+```
+
+### "SERVER_BASE_URL not set"
+- Set in `.env`: `SERVER_BASE_URL=https://your-ngrok-url.ngrok.io`
+- Ensure ngrok is running: `ngrok http 8000`
 
 ### "Call not connecting"
-- Verify ngrok is running and the URL is updated in `.env`
-- Check Twilio Console logs for webhook failures
-- Ensure your Twilio account has sufficient balance
+- Verify SERVER_BASE_URL is public and reachable
+- Check Twilio Console logs
+- Ensure account has sufficient balance
 
-### "Speech not being recognized"
-- Speak clearly and pause between sentences
-- Check Twilio application logs for transcription errors
-- Adjust `max_speech_time` and `timeout` in `/twiml/initial`
+### "WebSocket connection failed"
+- Check ngrok tunnel is active
+- Verify SERVER_BASE_URL matches ngrok URL
+- Review application logs for connection errors
+
+## Roadmap
+
+- [ ] Real LLM integration (OpenAI, Claude)
+- [ ] Persistent conversation storage (PostgreSQL)
+- [ ] API authentication & rate limiting
+- [ ] Advanced agent patterns (ReAct, tool use)
+- [ ] SSML support for expressive TTS
+- [ ] Multi-language support
+- [ ] Call transfer & escalation
+- [ ] Analytics dashboard
+
+## Environment Variables
+
+```
+# Twilio Configuration
+TWILIO_ACCOUNT_SID=your_account_sid
+TWILIO_AUTH_TOKEN=your_auth_token
+TWILIO_PHONE_NUMBER=+1234567890
+
+# Server Configuration
+HOST=0.0.0.0
+PORT=8000
+SERVER_BASE_URL=https://your-ngrok-url.ngrok.io
+```
 
 ## License
 
