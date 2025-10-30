@@ -2,16 +2,16 @@
 
 Get the Outbound AI Agent running in 5 minutes.
 
-## 1. Prerequisites
+## Prerequisites
 
 - Python 3.9+
-- Twilio Account
+- Twilio Account with Voice capability
 - ngrok
 
-## 2. Install & Setup
+## Setup
 
 ```bash
-# Clone/navigate to project
+# Navigate to project
 cd outbound_ai_agent
 
 # Run setup script
@@ -19,12 +19,11 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
-## 3. Configure Credentials
+## Configure Credentials
 
-Get your Twilio credentials from https://console.twilio.com:
-- Account SID
-- Auth Token
-- Phone Number (must be verified)
+1. Go to [Twilio Console](https://console.twilio.com)
+2. Copy your **Account SID** and **Auth Token**
+3. Get a verified phone number
 
 Edit `.env`:
 ```
@@ -34,21 +33,19 @@ TWILIO_PHONE_NUMBER=+1234567890
 SERVER_BASE_URL=https://your-ngrok-url.ngrok.io
 ```
 
-## 4. Expose to Internet (ngrok)
+## Expose to Internet (ngrok)
 
 In a new terminal:
 ```bash
 ngrok http 8000
 ```
 
-Copy the HTTPS URL (e.g., `https://abc123.ngrok.io`) and update `.env`:
+Copy the HTTPS URL and update `.env`:
 ```
 SERVER_BASE_URL=https://abc123.ngrok.io
 ```
 
-This enables Twilio to reach your WebSocket endpoint for real-time conversations.
-
-## 5. Run the Server
+## Run the Server
 
 ```bash
 uv run python main.py
@@ -59,7 +56,7 @@ You should see:
 INFO:     Uvicorn running on http://0.0.0.0:8000
 ```
 
-## 6. Make a Test Call
+## Make a Test Call
 
 In another terminal:
 ```bash
@@ -73,9 +70,7 @@ curl -X POST "http://localhost:8000/call/initiate" \
   -d '{"to": "+1234567890"}'
 ```
 
-Replace `1234567890` with your phone number (must be in E.164 format).
-
-## 7. Answer the Call!
+## Answer the Call!
 
 Your phone will ring. When you pick up:
 - You'll hear: "Hello! This is an AI assistant. How can I help you today?"
@@ -83,51 +78,100 @@ Your phone will ring. When you pick up:
 - The agent will reply
 - Continue the conversation!
 
-## Troubleshooting
+## API Endpoints
 
-### "Connection refused"
+### Initiate Call
+
 ```bash
-# Make sure server is running
-python main.py
+curl -X POST "http://localhost:8000/call/initiate" \
+  -H "Content-Type: application/json" \
+  -d '{"to": "+1234567890"}'
 ```
 
-### "Twilio credentials error"
-- Double-check credentials in `.env`
-- Make sure Phone Number is verified
-- Check account has SMS/Voice enabled
+**Response:**
+```json
+{
+  "call_sid": "CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "status": "initiated",
+  "phone_number": "+1234567890"
+}
+```
 
-### "Call not connecting"
-- Verify ngrok is running
-- Check ngrok URL matches `NGROK_URL` in `.env`
-- Review Twilio Console logs
+### Check Active Calls
 
-### "Speech not recognized"
-- Speak clearly after the beep
-- Check Twilio Console → Logs → Voice Calls
+```bash
+curl "http://localhost:8000/calls/active"
+```
+
+### Health Check
+
+```bash
+curl "http://localhost:8000/health"
+```
+
+## How It Works
+
+### Call Flow (ConversationRelay)
+
+1. **Initiate Call** (`POST /call/initiate`):
+   - Creates outbound call via Twilio API
+   - Stores session for WebSocket communication
+
+2. **TwiML Greeting** (`POST /voice`):
+   - Plays greeting: "Hello! This is an AI assistant..."
+   - Hands off to ConversationRelay for real-time streaming
+
+3. **Real-time WebSocket** (`/ws/{session_id}`):
+   - Twilio streams real-time transcribed speech
+   - Agent generates response (low latency)
+   - Sends response back via WebSocket SPI message
+   - Twilio synthesizes & plays audio, continues listening
+
+4. **Call Cleanup**:
+   - WebSocket disconnects when caller hangs up
+   - Session history is retained
+
+### Data Flow
+
+```
+User Speaks
+    ↓
+Twilio STT (real-time)
+    ↓
+WebSocket JSON message
+    ↓
+Extract transcribed text & add to history
+    ↓
+Supervisor Node (routes to appropriate worker)
+    ↓
+Worker Node (gather_info, service_info, qualify, schedule, or end)
+    ↓
+LLM generates contextual response
+    ↓
+Response added to conversation history
+    ↓
+WebSocket message: {"type": "text", "token": "...", "last": true}
+    ↓
+Twilio TTS + Audio Playback
+    ↓
+Listen for next input (loop)
+```
+
+## Quick Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| Connection refused | Ensure server is running: `uv run python main.py` |
+| Twilio credentials error | Double-check `.env` file, verify phone number |
+| Call not connecting | Verify ngrok is running and URL matches `.env` |
+| Speech not recognized | Speak clearly, check Twilio Console logs |
 
 ## Next Steps
 
 - **Customize Greeting**: Edit `AGENT_GREETING` in `config.py`
-- **Improve Agent**: Replace dummy responses in `agents.py` with real LLM
-- **Add Features**: Check README.md for future improvements
+- **Switch LLM**: See README.md for provider options
+- **Learn Architecture**: Check README.md for detailed system design
 
-## API Reference
+---
 
-### Initiate Call
-```bash
-POST /call/initiate?phone_number=+1234567890
-```
-
-### Check Active Calls
-```bash
-GET /calls/active
-```
-
-### Health Check
-```bash
-GET /health
-```
-
-## Documentation
-
-See `README.md` for full documentation.
+**See [README.md](README.md)** for comprehensive documentation, API reference, architecture details, and production guidelines.

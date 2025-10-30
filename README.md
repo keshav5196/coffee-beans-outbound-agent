@@ -2,6 +2,8 @@
 
 A real-time conversational AI agent for outbound calling using FastAPI, Twilio ConversationRelay WebSocket, and LangGraph.
 
+**⚡ Want to get started quickly?** See [QUICKSTART.md](QUICKSTART.md) for a 5-minute setup guide.
+
 ## Features
 
 ✅ Outbound calling via Twilio
@@ -22,106 +24,6 @@ A real-time conversational AI agent for outbound calling using FastAPI, Twilio C
 - **Groq LLM**: Fast LLM inference for agent responses
 - **uv**: Python package & project manager
 - **Python 3.9+**: Core runtime
-
-## Quick Start
-
-### 1. Prerequisites
-
-- Python 3.9+
-- Twilio Account with Voice capability
-- ngrok (for local development)
-
-### 2. Setup
-
-```bash
-# Clone and navigate to project
-cd outbound_ai_agent
-
-# Install dependencies
-uv sync
-
-# Configure environment
-cp .env.example .env
-# Edit .env with your Twilio credentials
-```
-
-### 3. Get Twilio Credentials
-
-1. Go to [Twilio Console](https://console.twilio.com)
-2. Copy Account SID and Auth Token
-3. Get a verified phone number (to call from)
-
-### 4. Expose to Internet (ngrok)
-
-```bash
-ngrok http 8000
-```
-
-Copy the HTTPS URL and update `.env`:
-```
-SERVER_BASE_URL=https://abc123.ngrok.io
-```
-
-### 5. Run the Server
-
-```bash
-uv run python main.py
-```
-
-Server starts on `http://localhost:8000`
-
-## API Endpoints
-
-### Initiate Call
-
-```bash
-curl -X POST "http://localhost:8000/call/initiate" \
-  -H "Content-Type: application/json" \
-  -d '{"to": "+1234567890"}'
-```
-
-**Response:**
-```json
-{
-  "call_sid": "CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-  "status": "initiated",
-  "phone_number": "+1234567890"
-}
-```
-
-### Check Active Calls
-
-```bash
-curl "http://localhost:8000/calls/active"
-```
-
-### Health Check
-
-```bash
-curl "http://localhost:8000/health"
-```
-
-## How It Works
-
-### Call Flow (ConversationRelay)
-
-1. **Initiate Call** (`POST /call/initiate`):
-   - Creates outbound call via Twilio API
-   - Stores session for WebSocket communication
-
-2. **TwiML Greeting** (`POST /voice`):
-   - Plays greeting: "Hello! This is an AI assistant..."
-   - Hands off to ConversationRelay for real-time streaming
-
-3. **Real-time WebSocket** (`/ws/{session_id}`):
-   - Twilio streams real-time transcribed speech
-   - Agent generates response (low latency)
-   - Sends response back via WebSocket SPI message
-   - Twilio synthesizes & plays audio, continues listening
-
-4. **Call Cleanup**:
-   - WebSocket disconnects when caller hangs up
-   - Session history is retained
 
 ## Architecture
 
