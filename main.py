@@ -1,5 +1,6 @@
 import json
 import logging
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
@@ -23,8 +24,25 @@ from agents import get_agent_response
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
-app = FastAPI(title="Outbound AI Agent - ConversationRelay")
+
+# Lifespan context manager for startup and shutdown events
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage app startup and shutdown events."""
+    # Startup
+    logger.info("Application started")
+    logger.info(f"Twilio Phone Number: {TWILIO_PHONE_NUMBER}")
+    logger.info(f"Server Base URL: {SERVER_BASE_URL}")
+
+    yield
+
+    # Shutdown
+    logger.info("Application shutting down")
+    SESSIONS.clear()
+
+
+# Initialize FastAPI app with lifespan
+app = FastAPI(title="Outbound AI Agent - ConversationRelay", lifespan=lifespan)
 
 # Twilio client
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
@@ -86,39 +104,58 @@ async def voice_webhook(request: Request):
     """TwiML endpoint called when Twilio dials the number.
 
     Returns TwiML which plays a greeting and hands off to ConversationRelay WebSocket.
+    Extracts CallSid from Twilio's form parameters.
     """
+    # Twilio sends CallSid as form parameter, not JSON
+    form_data = await request.form()
+    call_sid = form_data.get("CallSid", "unknown")
+
+    logger.info(f"Received TwiML request for CallSid: {call_sid}")
+
+    # Build WebSocket URL using the actual CallSid
+    # Use wss:// for secure WebSocket
+    websocket_url = f"{SERVER_BASE_URL}/ws/{call_sid}".replace("http://", "wss://").replace("https://", "wss://")
+
+    logger.info(f"Generating TwiML with websocket URL: {websocket_url}")
+
     twiml = (
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
         "<Response>"
-        f"  <Say voice=\"alice\">{AGENT_GREETING}</Say>"
         "  <Connect>"
-        "    <ConversationRelay />"
+        f"    <ConversationRelay url='{websocket_url}' welcomeGreeting='{AGENT_GREETING}'/>"
         "  </Connect>"
         "</Response>"
     )
 
+    logger.info(f"TwiML response:\n{twiml}")
     return Response(content=twiml, media_type="application/xml")
 
 
-@app.websocket("/ws/{session_id}")
-async def websocket_endpoint(websocket: WebSocket, session_id: str):
+@app.websocket("/ws/{call_sid}")
+async def websocket_endpoint(websocket: WebSocket, call_sid: str):
     """WebSocket endpoint for Twilio ConversationRelay.
 
     Receives real-time speech events from Twilio and sends agent responses.
     """
+    logger.info(f"WebSocket connection attempt for call_sid={call_sid}")
+
     await websocket.accept()
-    logger.info(f"WebSocket connection established for session_id={session_id}")
+    logger.info(f"WebSocket connection accepted for call_sid={call_sid}")
 
     # Get or create session
-    if session_id not in SESSIONS:
-        SESSIONS[session_id] = {
-            "call_sid": session_id,
+    if call_sid not in SESSIONS:
+        logger.warning(f"Session not found for call_sid={call_sid}, creating new session")
+        SESSIONS[call_sid] = {
+            "call_sid": call_sid,
             "phone_number": "unknown",
             "history": [],
         }
+    else:
+        logger.info(f"Session found for call_sid={call_sid}")
 
-    session = SESSIONS[session_id]
+    session = SESSIONS[call_sid]
     history = session["history"]
+    logger.info(f"Using session with phone_number={session.get('phone_number')}, history length={len(history)}")
 
     try:
         while True:
@@ -136,10 +173,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             user_text = None
 
             # Try common locations for transcribed text
-            for key in ("transcript", "text", "speech", "utterance", "transcription"):
-                if key in msg and isinstance(msg[key], str) and msg[key].strip():
-                    user_text = msg[key].strip()
-                    break
+            if "voicePrompt" in msg and isinstance(msg["voicePrompt"], str) and msg["voicePrompt"].strip():
+                user_text = msg["voicePrompt"].strip()
 
             # Check nested structure (result.alternatives)
             if not user_text:
@@ -162,21 +197,23 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
                 logger.info(f"Agent response: {agent_response}")
 
-                # Send response back to Twilio
-                spi_msg = {
-                    "type": "response.create",
-                    "response": {
-                        "speech": agent_response,
-                    },
-                }
-
-                await websocket.send_text(json.dumps(spi_msg))
+                
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "text",
+                            "token":agent_response,
+                            "last": True
+                        }
+                    ))
                 logger.info(f"Sent response: {agent_response}")
+            else:
+                logger.debug(f"No user text found in message: {json.dumps(msg)}")
 
     except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected for session_id={session_id}")
+        logger.info(f"WebSocket disconnected for call_sid={call_sid}")
     except Exception as e:
-        logger.exception(f"Unexpected error in WebSocket handler: {e}")
+        logger.exception(f"Unexpected error in WebSocket handler for call_sid={call_sid}: {e}")
 
 
 @app.get("/calls/active")
@@ -194,20 +231,5 @@ async def health_check():
     return {"status": "healthy"}
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Run on application startup."""
-    logger.info("Application started")
-    logger.info(f"Twilio Phone Number: {TWILIO_PHONE_NUMBER}")
-    logger.info(f"Server Base URL: {SERVER_BASE_URL}")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Run on application shutdown."""
-    logger.info("Application shutting down")
-    SESSIONS.clear()
-
-
 if __name__ == "__main__":
-    uvicorn.run(app, host=HOST, port=PORT)
+    uvicorn.run("main:app", host=HOST, port=PORT, reload=True)
