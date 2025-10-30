@@ -3,6 +3,7 @@
 from typing import Literal, Optional
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
 from langchain_groq import ChatGroq
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, END
 import logging
 
@@ -26,11 +27,24 @@ logger = logging.getLogger(__name__)
 # LLM SETUP
 # =============================================================================
 
-llm = ChatGroq(
-    model=settings.groq_model,
-    api_key=settings.groq_api_key,
-    temperature=0.7,
-)
+def initialize_llm():
+    """Initialize LLM based on configured provider."""
+    if settings.llm_provider.lower() == "gemini":
+        logger.info(f"Initializing Gemini LLM with model: {settings.gemini_model}")
+        return ChatGoogleGenerativeAI(
+            model=settings.gemini_model,
+            api_key=settings.gemini_api_key,
+            temperature=0.7,
+        )
+    else:  # Default to Groq
+        logger.info(f"Initializing Groq LLM with model: {settings.groq_model}")
+        return ChatGroq(
+            model=settings.groq_model,
+            api_key=settings.groq_api_key,
+            temperature=0.7,
+        )
+
+llm = initialize_llm()
 
 
 # =============================================================================
@@ -177,10 +191,8 @@ def information_gathering_node(state: AgentState) -> AgentState:
         SystemMessage(content=INFORMATION_GATHERING_PROMPT),
     ]
 
-    # Get the last user message for context
-    user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
-    if user_messages:
-        messages.append(user_messages[-1])
+    # Pass full conversation history so LLM knows what's been discussed
+    messages.extend(state["messages"])
 
     # Generate response
     response = llm.invoke(messages)
@@ -223,10 +235,8 @@ def service_info_node(state: AgentState) -> AgentState:
         SystemMessage(content=prompt),
     ]
 
-    # Get last user message
-    user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
-    if user_messages:
-        messages.append(user_messages[-1])
+    # Pass full conversation history so LLM knows what's been discussed
+    messages.extend(state["messages"])
 
     # Generate response
     response = llm.invoke(messages)
@@ -250,19 +260,29 @@ def qualification_node(state: AgentState) -> AgentState:
         SystemMessage(content=QUALIFICATION_PROMPT),
     ]
 
-    # Add context about what we know
-    if state.get("customer_info") or state.get("pain_points"):
-        context = "What we know: "
-        if state.get("customer_info"):
-            context += f"Company: {state['customer_info']}, "
-        if state.get("pain_points"):
-            context += f"Challenges: {state['pain_points']}"
+    # Build context about what we know
+    context_parts = []
+
+    if state.get("customer_info"):
+        if state["customer_info"].get("company"):
+            context_parts.append(f"Company: {state['customer_info']['company']}")
+        if state["customer_info"].get("role"):
+            context_parts.append(f"Role: {state['customer_info']['role']}")
+        if state["customer_info"].get("industry"):
+            context_parts.append(f"Industry: {state['customer_info']['industry']}")
+
+    if state.get("pain_points"):
+        context_parts.append(f"Main challenges: {', '.join(state['pain_points'])}")
+
+    if state.get("discussed_services"):
+        context_parts.append(f"Services discussed: {', '.join(state['discussed_services'])}")
+
+    if context_parts:
+        context = "Customer context from conversation:\n" + "\n".join(context_parts)
         messages.append(SystemMessage(content=context))
 
-    # Get last user message
-    user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
-    if user_messages:
-        messages.append(user_messages[-1])
+    # Pass full conversation history (not just last message) so LLM understands what's been discussed
+    messages.extend(state["messages"])
 
     # Generate response
     response = llm.invoke(messages)
@@ -276,14 +296,40 @@ def qualification_node(state: AgentState) -> AgentState:
 
 def scheduling_node(state: AgentState) -> AgentState:
     """Schedule a callback or next meeting."""
+    # Build context about what we've already gathered
+    context_parts = []
+
+    # Add what we know about the customer
+    if state.get("customer_info"):
+        if state["customer_info"].get("company"):
+            context_parts.append(f"Customer company: {state['customer_info']['company']}")
+        if state["customer_info"].get("role"):
+            context_parts.append(f"Customer role: {state['customer_info']['role']}")
+
+    # Add contact info if we already have it
+    contact_info = []
+    if state.get("qualification_data"):
+        if state["qualification_data"].get("email"):
+            contact_info.append(f"Email: {state['qualification_data']['email']}")
+        if state["qualification_data"].get("phone"):
+            contact_info.append(f"Phone: {state['qualification_data']['phone']}")
+        if state["qualification_data"].get("preferred_time"):
+            contact_info.append(f"Preferred time: {state['qualification_data']['preferred_time']}")
+
+    if contact_info:
+        context_parts.append(f"Contact info we already have: {', '.join(contact_info)}")
+
+    context = "\n".join(context_parts)
+
     messages = [
         SystemMessage(content=SCHEDULING_PROMPT),
     ]
 
-    # Get last user message
-    user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
-    if user_messages:
-        messages.append(user_messages[-1])
+    if context:
+        messages.append(SystemMessage(content=f"Context from previous conversation:\n{context}"))
+
+    # Pass full conversation history (not just last message) so LLM understands what's been discussed
+    messages.extend(state["messages"])
 
     # Generate response
     response = llm.invoke(messages)
@@ -299,13 +345,11 @@ def scheduling_node(state: AgentState) -> AgentState:
 def end_node(state: AgentState) -> AgentState:
     """End the conversation politely."""
     messages = [
-        SystemMessage(content="You are ending the call. Provide a brief, polite closing statement.")
+        SystemMessage(content="You are ending the call. Provide a brief, polite closing statement. Thank the customer and wish them well.")
     ]
 
-    # Get last user message
-    user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
-    if user_messages:
-        messages.append(user_messages[-1])
+    # Pass full conversation history so LLM can provide personalized closing
+    messages.extend(state["messages"])
 
     # Generate closing response
     response = llm.invoke(messages)

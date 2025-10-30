@@ -15,4 +15,5 @@ dependencies = [
     "twilio>=9.8.4",
     "uvicorn>=0.37.0",
     "websockets>=15.0.1",
+    "langchain-google-genai>=3.0.0",
 ]

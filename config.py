@@ -14,9 +14,16 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
+    # LLM Provider Selection
+    llm_provider: str = "groq"  # Options: "groq" or "gemini"
+
     # Groq API
-    groq_api_key: str
+    groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"  # Fast and capable
+
+    # Google Gemini API
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-1.5-flash"  # Options: gemini-1.5-pro, gemini-1.5-flash, gemini-2.0-flash
 
     # Twilio
     twilio_account_sid: str
@@ -44,4 +51,4 @@ TWILIO_PHONE_NUMBER = settings.twilio_phone_number
 HOST = settings.app_host
 PORT = settings.app_port
 SERVER_BASE_URL = settings.server_base_url
-AGENT_GREETING = "Hello! This is Maya from CoffeeBeans Consulting. We help companies implement AI solutions, Blockchain applications, and modernize their technology infrastructure. I wanted to reach out and see if you'd be interested in learning about our services. Do you have a couple of minutes to chat?"
+AGENT_GREETING = "Hello! This is an AI assistant from CoffeeBeans Consulting. We help companies implement AI solutions, Blockchain applications, and modernize their technology infrastructure. I wanted to reach out and see if you'd be interested in learning about our services. Do you have a couple of minutes to chat?"
