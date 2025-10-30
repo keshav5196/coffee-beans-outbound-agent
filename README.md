@@ -7,16 +7,19 @@ A real-time conversational AI agent for outbound calling using FastAPI, Twilio C
 ✅ Outbound calling via Twilio
 ✅ Real-time audio streaming (ConversationRelay WebSocket)
 ✅ Low-latency (~200-500ms) speech-to-text & text-to-speech
-✅ Multi-turn conversation handling with history
-✅ LangGraph agent framework ready for LLM integration
-✅ Session-based call management
+✅ Multi-turn conversation handling with full history
+✅ LangGraph supervisor pattern with intelligent worker routing
+✅ Information gathering, service presentation, and lead qualification
+✅ Groq LLM integration for fast, context-aware responses
+✅ Session-based call management with error handling
 ✅ Easy deployment with uv package manager
 
 ## Tech Stack
 
 - **FastAPI**: Web framework with async/await support
 - **Twilio ConversationRelay**: Real-time voice API with WebSocket
-- **LangGraph**: Conversation agent orchestration
+- **LangGraph**: Agent orchestration with supervisor pattern
+- **Groq LLM**: Fast LLM inference for agent responses
 - **uv**: Python package & project manager
 - **Python 3.9+**: Core runtime
 
@@ -130,27 +133,38 @@ User → REST API → FastAPI → Twilio
                   WebSocket
                   (Real-time)
                      ↓
-                 LangGraph Agent
-                (Conversation Logic)
+            Supervisor Router
+                     ↓
+        ┌──────────┬──────────┬──────────┬─────────┐
+        ↓          ↓          ↓          ↓         ↓
+   Gather Info   Service Info Qualify  Schedule   End
+     Worker      Worker      Worker    Worker   Worker
+        ↓          ↓          ↓          ↓         ↓
+           LangGraph State Management
 ```
 
 ### Key Components
 
 **main.py** - FastAPI server
-- `POST /call/initiate`: Create outbound call
+- `POST /call/initiate`: Create outbound call with error handling
 - `POST /voice`: TwiML endpoint with greeting + ConversationRelay handoff
-- `WebSocket /ws/{session_id}`: Real-time audio handler with agent integration
+- `WebSocket /ws/{session_id}`: Real-time audio handler with supervisor pattern integration
 - `GET /calls/active`: List active sessions
 - `GET /health`: Health check
 
-**agents.py** - LangGraph agent
-- `get_agent_response()`: Main entry point
-- `generate_dummy_response()`: Rule-based responses (replaceable with real LLM)
-- Maintains conversation history per session
+**agents.py** - Supervisor pattern with LangGraph
+- `supervisor_node()`: Routes conversations to appropriate worker nodes using function calling
+- `information_gathering_node()`: Collects customer company, role, industry, challenges
+- `service_info_node()`: Provides CoffeeBeans service information (AI, Blockchain, DevOps, QaaS, BigData)
+- `qualification_node()`: Assesses lead quality with budget/timeline questions
+- `scheduling_node()`: Books follow-up meetings or callbacks
+- `end_node()`: Politely closes conversations
+- `get_agent_response()`: Main entry point compatible with WebSocket handler
 
 **config.py** - Environment configuration
 - Twilio credentials
 - Server settings (HOST, PORT, SERVER_BASE_URL)
+- Groq LLM API key and model selection
 - Agent greeting customization
 
 ### Data Flow
@@ -162,11 +176,17 @@ Twilio STT (real-time)
     ↓
 WebSocket JSON message
     ↓
-Extract transcribed text
+Extract transcribed text & add to history
     ↓
-LangGraph Agent → Generate response
+Supervisor Node (routes to appropriate worker)
     ↓
-WebSocket SPI message: {"type": "response.create", "response": {"speech": "..."}}
+Worker Node (gather_info, service_info, qualify, schedule, or end)
+    ↓
+LLM generates contextual response
+    ↓
+Response added to conversation history
+    ↓
+WebSocket message: {"type": "text", "token": "...", "last": true}
     ↓
 Twilio TTS + Audio Playback
     ↓
@@ -191,21 +211,21 @@ outbound_ai_agent/
 └── .gitignore           # Git exclusions
 ```
 
-## Integrating a Real LLM
+## Switching LLM Providers
 
-Replace `generate_dummy_response()` in **agents.py**:
+The agent currently uses **Groq LLM** for fast inference. To use a different LLM provider, update **agents.py**:
 
 ```python
-from langchain.chat_models import ChatOpenAI
+from langchain_openai import ChatOpenAI
+# or other providers:
+# from langchain_anthropic import ChatAnthropic
+# from langchain_google_vertexai import ChatVertexAI
 
-llm = ChatOpenAI(model="gpt-4", temperature=0.7)
-
-def get_agent_response(user_message, conversation_history=None):
-    response = llm.invoke(user_message)
-    return response.content
+llm = ChatOpenAI(model="gpt-4-turbo", temperature=0.7)
+# or: llm = ChatAnthropic(model="claude-3-sonnet-20240229")
 ```
 
-Supports: OpenAI, Anthropic Claude, open-source models (LLaMA, Mistral, etc.)
+Supported providers: OpenAI, Anthropic Claude, Google Vertex AI, Ollama (local), HuggingFace
 
 ## Performance
 
@@ -242,17 +262,6 @@ uv run python -c "from config import TWILIO_ACCOUNT_SID; print(TWILIO_ACCOUNT_SI
 - Check ngrok tunnel is active
 - Verify SERVER_BASE_URL matches ngrok URL
 - Review application logs for connection errors
-
-## Roadmap
-
-- [ ] Real LLM integration (OpenAI, Claude)
-- [ ] Persistent conversation storage (PostgreSQL)
-- [ ] API authentication & rate limiting
-- [ ] Advanced agent patterns (ReAct, tool use)
-- [ ] SSML support for expressive TTS
-- [ ] Multi-language support
-- [ ] Call transfer & escalation
-- [ ] Analytics dashboard
 
 ## Environment Variables
 

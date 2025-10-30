@@ -66,37 +66,37 @@ async def initiate_call(call: CallRequest):
     if not twilio_client:
         raise HTTPException(status_code=500, detail="Twilio client not configured (missing env vars)")
 
-    # try:
-    logger.info(f"Initiating call to {call.to}")
+    try:
+        logger.info(f"Initiating call to {call.to}")
 
-    voice_url = f"{SERVER_BASE_URL}/voice"
+        voice_url = f"{SERVER_BASE_URL}/voice"
 
-    # Create the call with TwiML endpoint
-    twilio_call = twilio_client.calls.create(
-        to=call.to,
-        from_=TWILIO_PHONE_NUMBER,
-        url=voice_url,
-        method="POST",
-    )
+        # Create the call with TwiML endpoint
+        twilio_call = twilio_client.calls.create(
+            to=call.to,
+            from_=TWILIO_PHONE_NUMBER,
+            url=voice_url,
+            method="POST",
+        )
 
-    # Store session info
-    SESSIONS[twilio_call.sid] = {
-        "call_sid": twilio_call.sid,
-        "phone_number": call.to,
-        "history": [],
-    }
+        # Store session info
+        SESSIONS[twilio_call.sid] = {
+            "call_sid": twilio_call.sid,
+            "phone_number": call.to,
+            "history": [],
+        }
 
-    logger.info(f"Call created with SID: {twilio_call.sid}")
+        logger.info(f"Call created with SID: {twilio_call.sid}")
 
-    return {
-        "call_sid": twilio_call.sid,
-        "status": "initiated",
-        "phone_number": call.to,
-    }
+        return {
+            "call_sid": twilio_call.sid,
+            "status": "initiated",
+            "phone_number": call.to,
+        }
 
-    # except Exception as e:
-    #     logger.error(f"Error initiating call: {str(e)}")
-    #     raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error initiating call: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/voice")
@@ -159,70 +159,70 @@ async def websocket_endpoint(websocket: WebSocket, call_sid: str):
     history = session["history"]
     logger.info(f"Using session with phone_number={session.get('phone_number')}, history length={len(history)}")
 
-    # try:
-    while True:
-        print(f"[DEBUG] Waiting for message from Twilio on call_sid={call_sid}", flush=True)
-        # Receive message from Twilio
-        raw = await websocket.receive_text()
-        print(f"[DEBUG] Received raw message: {raw[:100]}", flush=True)
-        # try:
-        msg = json.loads(raw)
-        print(f"[DEBUG] Parsed JSON message", flush=True)
-        # except json.JSONDecodeError:
-        #     logger.warning(f"Received non-JSON payload: {raw}")
-        #     continue
+    try:
+        while True:
+            print(f"[DEBUG] Waiting for message from Twilio on call_sid={call_sid}", flush=True)
+            # Receive message from Twilio
+            raw = await websocket.receive_text()
+            print(f"[DEBUG] Received raw message: {raw[:100]}", flush=True)
+            try:
+                msg = json.loads(raw)
+                print(f"[DEBUG] Parsed JSON message", flush=True)
+            except json.JSONDecodeError:
+                logger.warning(f"Received non-JSON payload: {raw}")
+                continue
 
-        logger.info(f"Received WebSocket message: {json.dumps(msg)}")
+            logger.info(f"Received WebSocket message: {json.dumps(msg)}")
 
-        # Extract user text from the message
-        user_text = None
+            # Extract user text from the message
+            user_text = None
 
-        # Try common locations for transcribed text
-        if "voicePrompt" in msg and isinstance(msg["voicePrompt"], str) and msg["voicePrompt"].strip():
-            user_text = msg["voicePrompt"].strip()
+            # Try common locations for transcribed text
+            if "voicePrompt" in msg and isinstance(msg["voicePrompt"], str) and msg["voicePrompt"].strip():
+                user_text = msg["voicePrompt"].strip()
 
-        # Check nested structure (result.alternatives)
-        if not user_text:
-            result = msg.get("result")
-            if isinstance(result, dict):
-                alts = result.get("alternatives") or []
-                if isinstance(alts, list) and len(alts) > 0 and isinstance(alts[0], dict):
-                    t = alts[0].get("transcript")
-                    if isinstance(t, str) and t.strip():
-                        user_text = t.strip()
+            # Check nested structure (result.alternatives)
+            if not user_text:
+                result = msg.get("result")
+                if isinstance(result, dict):
+                    alts = result.get("alternatives") or []
+                    if isinstance(alts, list) and len(alts) > 0 and isinstance(alts[0], dict):
+                        t = alts[0].get("transcript")
+                        if isinstance(t, str) and t.strip():
+                            user_text = t.strip()
 
-        # Process if we have user text
-        if user_text:
-            print(f"[DEBUG] User text detected: {user_text}", flush=True)
-            logger.info(f"User text detected: {user_text}")
-            history.append({"role": "user", "content": user_text})
+            # Process if we have user text
+            if user_text:
+                print(f"[DEBUG] User text detected: {user_text}", flush=True)
+                logger.info(f"User text detected: {user_text}")
+                history.append({"role": "user", "content": user_text})
 
-            # Get agent response
-            print(f"[DEBUG] Calling get_agent_response with user_text={user_text[:50]}", flush=True)
-            agent_response = get_agent_response(user_text, conversation_history=history)
-            print(f"[DEBUG] Got agent response: {agent_response[:50]}", flush=True)
-            history.append({"role": "assistant", "content": agent_response})
+                # Get agent response
+                print(f"[DEBUG] Calling get_agent_response with user_text={user_text[:50]}", flush=True)
+                agent_response = get_agent_response(user_text, conversation_history=history, call_sid=call_sid)
+                print(f"[DEBUG] Got agent response: {agent_response[:50]}", flush=True)
+                history.append({"role": "assistant", "content": agent_response})
 
-            logger.info(f"Agent response: {agent_response}")
+                logger.info(f"Agent response: {agent_response}")
 
-            print(f"[DEBUG] Sending response via WebSocket", flush=True)
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "type": "text",
-                        "token":agent_response,
-                        "last": True
-                    }
-                ))
-            print(f"[DEBUG] Response sent successfully", flush=True)
-            logger.info(f"Sent response: {agent_response}")
-        else:
-            logger.debug(f"No user text found in message: {json.dumps(msg)}")
+                print(f"[DEBUG] Sending response via WebSocket", flush=True)
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "text",
+                            "token": agent_response,
+                            "last": True
+                        }
+                    ))
+                print(f"[DEBUG] Response sent successfully", flush=True)
+                logger.info(f"Sent response: {agent_response}")
+            else:
+                logger.debug(f"No user text found in message: {json.dumps(msg)}")
 
-    # except WebSocketDisconnect:
-    #     logger.info(f"WebSocket disconnected for call_sid={call_sid}")
-    # except Exception as e:
-    #     logger.exception(f"Unexpected error in WebSocket handler for call_sid={call_sid}: {e}")
+    except WebSocketDisconnect:
+        logger.info(f"WebSocket disconnected for call_sid={call_sid}")
+    except Exception as e:
+        logger.exception(f"Unexpected error in WebSocket handler for call_sid={call_sid}: {e}")
 
 
 @app.get("/calls/active")
