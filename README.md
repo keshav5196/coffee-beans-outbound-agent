@@ -6,15 +6,15 @@ A real-time conversational AI agent for outbound calling using FastAPI, Twilio C
 
 ## Features
 
-✅ Outbound calling via Twilio
-✅ Real-time audio streaming (ConversationRelay WebSocket)
-✅ Low-latency (~200-500ms) speech-to-text & text-to-speech
-✅ Multi-turn conversation handling with full history
-✅ LangGraph supervisor pattern with intelligent worker routing
-✅ Information gathering, service presentation, and lead qualification
-✅ Groq LLM integration for fast, context-aware responses
-✅ Session-based call management with error handling
-✅ Easy deployment with uv package manager
+- ✅ Outbound calling via Twilio
+- ✅ Real-time audio streaming (ConversationRelay WebSocket)
+- ✅ Low-latency (~200-500ms) speech-to-text & text-to-speech
+- ✅ Multi-turn conversation handling with full history
+- ✅ LangGraph supervisor pattern with intelligent worker routing
+- ✅ Information gathering, service presentation, and lead qualification
+- ✅ Groq LLM integration for fast, context-aware responses
+- ✅ Session-based call management with error handling
+- ✅ Easy deployment with uv package manager
 
 ## Tech Stack
 
