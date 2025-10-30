@@ -1,23 +1,47 @@
+"""Configuration settings for the voice agent."""
+
 import os
-from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Load environment variables
-load_dotenv()
 
-# Twilio Configuration
-TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
+class Settings(BaseSettings):
+    """Application settings loaded from environment variables."""
 
-# Server Configuration
-HOST = os.getenv("HOST", "0.0.0.0")
-PORT = int(os.getenv("PORT", 8000))
-SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", "http://localhost:8000")  # Public URL for Twilio webhooks/WebSocket
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore"
+    )
 
-# Agent Configuration
-AGENT_GREETING = "Hello! This is an AI assistant. How can I help you today?"
-AGENT_MODEL = "gpt-4"  # Placeholder - not used directly since we're using dummy agent
+    # Groq API
+    groq_api_key: str
+    groq_model: str = "llama-3.3-70b-versatile"  # Fast and capable
 
-# Validate required configs
-if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER]):
-    print("Warning: Missing Twilio credentials. Please set environment variables.")
+    # Twilio
+    twilio_account_sid: str
+    twilio_auth_token: str
+    twilio_phone_number: str
+
+    # Application
+    app_host: str = "0.0.0.0"
+    app_port: int = 8000
+    server_base_url: str = "http://localhost:8000"
+    debug: bool = False
+
+    # Agent settings
+    max_conversation_turns: int = 15
+    conversation_timeout_seconds: int = 300  # 5 minutes
+
+
+# Global settings instance
+settings = Settings()
+
+# Legacy compatibility exports for main.py
+TWILIO_ACCOUNT_SID = settings.twilio_account_sid
+TWILIO_AUTH_TOKEN = settings.twilio_auth_token
+TWILIO_PHONE_NUMBER = settings.twilio_phone_number
+HOST = settings.app_host
+PORT = settings.app_port
+SERVER_BASE_URL = settings.server_base_url
+AGENT_GREETING = "Hello! This is Maya from CoffeeBeans Consulting. We help companies implement AI solutions, Blockchain applications, and modernize their technology infrastructure. I wanted to reach out and see if you'd be interested in learning about our services. Do you have a couple of minutes to chat?"
